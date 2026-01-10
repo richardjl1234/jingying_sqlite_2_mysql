@@ -42,8 +42,8 @@ def process_encode(input_string: str) -> str:
     result_parts = []
     
     for char in input_string:
-        # Skip punctuation (including Chinese punctuation)
-        if char in '，。！？；：""''【】（）《》〈〉、…—·' or char.isspace() or is_chinese_punctuation(char):
+        # Skip punctuation (including Chinese punctuation and half-width colon)
+        if char in '，。！？；：""''【】（）《》〈〉、…—·:' or char.isspace() or is_chinese_punctuation(char):
             continue
         # Check if character is Chinese (Unicode range for CJK characters)
         elif '\u4e00' <= char <= '\u9fff':
@@ -99,23 +99,36 @@ def main():
         if not duplicates.empty:
             print("\nDuplicate process_code found:")
             print(duplicates[['name', 'process_code']].to_string())
-            # now process, the duplicate. for all the duplicate process_code,
-            # the first one will keep the original process_code,
-            # and the rest will be replaced with the process_code with a suffix of _1, _2, etc.
-            for index, row in duplicates.iterrows():
-                if index == row.name:
-                    continue
-                df.at[index, 'process_code'] = f"{row['process_code']}_{index - row.name}"
-            # and then print the result
+            # Process duplicates: for each group of duplicate process_code values,
+            # keep the first occurrence unchanged, and for subsequent occurrences
+            # add suffix _1, _2, etc. starting from 1.
+            # Identify duplicate groups using pandas groupby on the original codes
+            duplicate_groups = {}
+            # Get unique duplicate codes
+            duplicate_codes = df['process_code'][df['process_code'].duplicated()].unique()
+            
+            for code in duplicate_codes:
+                # Get all indices for this duplicate code
+                indices = df[df['process_code'] == code].index.tolist()
+                duplicate_groups[code] = indices
+            
+            # Process each duplicate group
+            for code, indices in duplicate_groups.items():
+                if len(indices) > 1:
+                    # Sort indices to maintain original order
+                    indices.sort()
+                    # Keep first occurrence unchanged
+                    # For subsequent occurrences, add suffix starting from 1
+                    for i, idx in enumerate(indices[1:], start=1):
+                        df.at[idx, 'process_code'] = f"{code}{i}"
+            
             print("\nAfter processing duplicate process_code:")
-            print(duplicates[['name', 'process_code']].to_string())
-            return
-
-
+            # Show all rows that were originally duplicates
+            print(df.loc[duplicates.index, ['name', 'process_code']])
+            # df.to_html("processed_quota_distinct_values.html", index=False)
 
         
-        
-        print("\nNo duplicate process codes found. Proceeding with database upload...")
+        # print("\nNo duplicate process codes found. Proceeding with database upload...")
         
         # Step 6: Save the result to Excel (optional)
         output_file = "processed_quota_distinct_values.xlsx"
