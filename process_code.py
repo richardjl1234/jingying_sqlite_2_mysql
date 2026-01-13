@@ -66,7 +66,7 @@ def main():
     and upload to MySQL database.
     """
     # File configuration
-    excel_file = "quota_distinct_values.xlsx"
+    excel_file = "../quota/quota_distinct_values.xlsx"
     sheet_name = "加工工序"
     
     try:
