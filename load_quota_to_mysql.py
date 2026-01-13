@@ -1,13 +1,12 @@
 """
 Load quota data from SQLite database, calculate obsolete_date for each record,
-and export the results to MySQL database and HTML file.
+and export the results to MySQL database.
 
 This program:
 1. Reads quota data from SQLite database (quota table)
 2. Calculates obsolete_date for each record based on effective dates
 3. Maps data to MySQL quotas table using code dictionaries
 4. Loads the processed data to MySQL database
-5. Exports the processed data to HTML format (optional)
 """
 
 import os
@@ -67,20 +66,20 @@ def get_quota_with_obsolete_date():
     Read quota data from SQLite database and calculate obsolete_date for each record.
     
     This function:
-    1. Reads all columns except '代码' from the quota table
+    1. Reads all columns from the quota table including '代码'
     2. Groups data by (类别1, 类别2, 型号, 加工工序)
     3. Calculates obsolete_date for each record within each group
-    4. Returns the processed DataFrame sorted by the grouping columns
+    4. Returns the processed DataFrame sorted by 代码 to maintain original sequence
     
     Returns:
         pandas.DataFrame: Processed quota data with obsolete_date column
-                          Sorted by 类别1, 类别2, 型号, 加工工序
+                          Sorted by 代码 to maintain original SQLite sequence
     """
-    # Build SQL query to select all columns except 代码 from quota table
+    # Build SQL query to select all columns from quota table including 代码
     query = """
-    SELECT 类别1, 类别2, 型号, 加工工序, 定额, effected_from 
+    SELECT 代码, 类别1, 类别2, 型号, 加工工序, 定额, effected_from 
     FROM quota 
-    ORDER BY 类别1, 类别2, 型号, 加工工序, effected_from
+    ORDER BY 代码
     """
     
     print("Reading quota data from SQLite database...")
@@ -116,8 +115,8 @@ def get_quota_with_obsolete_date():
     # Reset the index (groupby creates a multi-index)
     df_with_obsolete = df_with_obsolete.reset_index(drop=True)
     
-    # Sort by the grouping columns to ensure consistent ordering
-    df_with_obsolete = df_with_obsolete.sort_values(by=group_columns).reset_index(drop=True)
+    # Sort by the 代码 column to maintain original SQLite sequence
+    df_with_obsolete = df_with_obsolete.sort_values(by='代码').reset_index(drop=True)
     
     print(f"Processed {len(df_with_obsolete)} records with obsolete_date")
     
@@ -248,6 +247,9 @@ def map_dataframe_to_quotas(df, cat1_dict, cat2_dict, model_dict, process_dict):
     """
     Map quota dataframe to MySQL quotas table format.
     
+    Note: The '代码' column is used for sorting to maintain original SQLite sequence
+    but is NOT loaded to MySQL (discarded after sorting).
+    
     Column mapping:
     - 类别1 -> cat1_code (using cat1_dict)
     - 类别2 -> cat2_code (using cat2_dict)
@@ -260,14 +262,14 @@ def map_dataframe_to_quotas(df, cat1_dict, cat2_dict, model_dict, process_dict):
     - current_timestamp -> created_at (generated)
     
     Args:
-        df: Source DataFrame with columns [类别1, 类别2, 型号, 加工工序, 定额, effected_from, obsolete_date]
+        df: Source DataFrame with columns [代码, 类别1, 类别2, 型号, 加工工序, 定额, effected_from, obsolete_date]
         cat1_dict: Dictionary mapping category 1 names to codes
         cat2_dict: Dictionary mapping category 2 names to codes
         model_dict: Dictionary mapping model names to codes
         process_dict: Dictionary mapping process names to codes
         
     Returns:
-        pandas.DataFrame: Mapped data ready for MySQL insertion
+        pandas.DataFrame: Mapped data ready for MySQL insertion (without 代码 column)
         
     Raises:
         ValueError: If any mapping key is not found in the dictionary
@@ -435,29 +437,14 @@ def main():
         print(f"Error loading to MySQL: {e}")
         raise
     
-    # Step 5: Save to HTML file (optional)
-    print("\n[Step 5] Saving processed data to HTML file...")
+    # Display summary statistics
+    print(f"\nSummary:")
+    print(f"- Total records processed: {len(df)}")
+    print(f"- Records loaded to MySQL: {loaded_count}")
+    print(f"- Unique groups: {df.groupby(['类别1', '类别2', '型号', '加工工序']).ngroups}")
+    print(f"- Records with '99991231' obsolete_date: {len(df[df['obsolete_date'] == '99991231'])}")
     
-    output_file = "quota_with_obsolete_date.html"
-    
-    try:
-        # Save to HTML with proper formatting
-        df.to_html(output_file, index=False, encoding='utf-8-sig')
-        
-        print(f"Successfully saved {len(df)} records to HTML file: {output_file}")
-        
-        # Display summary statistics
-        print(f"\nSummary:")
-        print(f"- Total records processed: {len(df)}")
-        print(f"- Records loaded to MySQL: {loaded_count}")
-        print(f"- Unique groups: {df.groupby(['类别1', '类别2', '型号', '加工工序']).ngroups}")
-        print(f"- Records with '99991231' obsolete_date: {len(df[df['obsolete_date'] == '99991231'])}")
-        
-        print(f"\nProcessing complete!")
-        
-    except Exception as e:
-        print(f"Error saving HTML file: {e}")
-        raise
+    print(f"\nProcessing complete!")
     
     return quotas_df
 
