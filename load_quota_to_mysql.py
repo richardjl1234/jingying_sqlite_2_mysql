@@ -10,6 +10,7 @@ This program:
 """
 
 import os
+import re
 import pandas as pd
 from datetime import datetime, timedelta
 from sql_util import sqlite_sql, mysql_sql
@@ -351,6 +352,185 @@ def map_dataframe_to_quotas(df, cat1_dict, cat2_dict, model_dict, process_dict):
     return quotas_df
 
 
+def sanitize_sheet_name(name):
+    """
+    Remove characters that are not suitable for Excel sheet names.
+    
+    Excel sheet names cannot contain: \ / ? * [ ] : and cannot be empty or longer than 31 characters.
+    
+    Args:
+        name: The original sheet name
+        
+    Returns:
+        str: Sanitized sheet name
+    """
+    # Remove invalid characters for Excel sheet names
+    invalid_chars = r'[\\/\?\*\[\]:]'
+    sanitized = re.sub(invalid_chars, '', name)
+    # Remove leading/trailing whitespace
+    sanitized = sanitized.strip()
+    # Truncate to 31 characters if necessary
+    if len(sanitized) > 31:
+        sanitized = sanitized[:31]
+    # If empty after sanitization, use a default name
+    if not sanitized:
+        sanitized = 'Sheet'
+    return sanitized
+
+
+def get_model_sort_key(model_code):
+    """
+    Extract the sort key from a model code.
+    
+    The sort key is the integer value of the part before the first hyphen.
+    For example:
+        "100-2" -> 100
+        "63-1" -> 63
+        "999" -> 999
+    
+    Args:
+        model_code: The model code string
+        
+    Returns:
+        int: The sort key
+    """
+    try:
+        # Extract the part before the first hyphen
+        part = model_code.split('-')[0]
+        return int(part)
+    except (ValueError, AttributeError):
+        # If conversion fails, return 0
+        return 0
+
+
+def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, output_file_name):
+    """
+    Export quota data to an Excel file with multiple sheets.
+    
+    Each sheet corresponds to a unique combination of (cat1_code, effective_date).
+    The table structure:
+    - Column name: process name and code ("{process_name} ({process_code})")
+    - Row index: model name and code ("{model_name} ({model_code})")
+    - Cell values: unit_price
+    
+    Args:
+        df: DataFrame containing quota data with columns including cat1_code, cat2_code, 
+            model_code, process_code, unit_price, effective_date
+        process_dict: Dictionary mapping process codes to process names {code: name}
+        cat1_dict: Dictionary mapping cat1 codes to cat1 names {code: name}
+        cat2_dict: Dictionary mapping cat2 codes to cat2 names {code: name}
+        model_dict: Dictionary mapping model codes to model names {code: name}
+        output_file_name: The output Excel file name (without path)
+    """
+    # Ensure output file has .xlsx extension
+    if not output_file_name.endswith('.xlsx'):
+        output_file_name += '.xlsx'
+    
+    print(f"\nExporting quota data to Excel: {output_file_name}")
+    
+    # Get all unique combinations of (cat1_code, effective_date)
+    cat1_effective_pairs = df[['cat1_code', 'effective_date']].drop_duplicates()
+    
+    # Sort by cat1_code, then by effective_date
+    cat1_effective_pairs = cat1_effective_pairs.sort_values(['cat1_code', 'effective_date'])
+    
+    # Create Excel writer with openpyxl engine
+    with pd.ExcelWriter(output_file_name, engine='openpyxl') as writer:
+        for _, row in cat1_effective_pairs.iterrows():
+            cat1_code = row['cat1_code']
+            effective_date = row['effective_date']
+            
+            # Format effective_date for sheet name
+            if isinstance(effective_date, str):
+                try:
+                    date_obj = datetime.strptime(effective_date, '%Y%m%d')
+                    formatted_date = date_obj.strftime('%Y-%m-%d')
+                except ValueError:
+                    formatted_date = effective_date
+            else:
+                formatted_date = pd.to_datetime(effective_date).strftime('%Y-%m-%d')
+            
+            # Create sheet name: "{cat1_name} {cat1_code} {effective_date}"
+            cat1_name = cat1_dict.get(cat1_code, str(cat1_code))
+            sheet_name = sanitize_sheet_name(f"{cat1_name} {cat1_code} {formatted_date}")
+            
+            print(f"  Processing sheet: {sheet_name}")
+            
+            # Filter dataframe for this cat1_code and effective_date
+            sheet_df = df[(df['cat1_code'] == cat1_code) & (df['effective_date'] == effective_date)]
+            
+            # Get unique cat2 codes for this cat1
+            unique_cat2_codes = sheet_df['cat2_code'].unique()
+            
+            # Track the current starting row for writing
+            current_row = 0
+            
+            for cat2_code in sorted(unique_cat2_codes):
+                # Filter dataframe for this cat1, cat2, and effective_date
+                cat2_df = sheet_df[sheet_df['cat2_code'] == cat2_code]
+                
+                # Output the cat2 header: "{cat2_name} ({cat2_code})"
+                cat2_name = cat2_dict.get(cat2_code, str(cat2_code))
+                cat2_header = f"{cat2_name} ({cat2_code})"
+                
+                # Get unique process codes (columns)
+                unique_process_codes = sorted(cat2_df['process_code'].unique())
+                
+                # Create column names: "{process_name} ({process_code})"
+                column_names = []
+                for process_code in unique_process_codes:
+                    process_name = process_dict.get(process_code, str(process_code))
+                    column_names.append(f"{process_name} ({process_code})")
+                
+                # Get unique model codes (rows) and sort by the numeric part before hyphen
+                unique_model_codes = sorted(cat2_df['model_code'].unique(), key=get_model_sort_key)
+                
+                # Create row index: "{model_name} ({model_code})"
+                row_index = []
+                for model_code in unique_model_codes:
+                    model_name = model_dict.get(model_code, str(model_code))
+                    row_index.append(f"{model_name} ({model_code})")
+                
+                # Build the data matrix
+                data_dict = {col: [] for col in column_names}
+                
+                for model_code in unique_model_codes:
+                    model_row_data = []
+                    model_df = cat2_df[cat2_df['model_code'] == model_code]
+                    
+                    for process_code in unique_process_codes:
+                        process_model_df = model_df[model_df['process_code'] == process_code]
+                        
+                        if not process_model_df.empty:
+                            unit_price = process_model_df['unit_price'].values[0]
+                        else:
+                            unit_price = None
+                        
+                        model_row_data.append(unit_price)
+                    
+                    # Assign data to columns
+                    for i, value in enumerate(model_row_data):
+                        data_dict[column_names[i]].append(value)
+                
+                # Create the result dataframe
+                result_df = pd.DataFrame(data_dict, index=row_index)
+                
+                # Write the cat2 header at current_row
+                # First write the dataframe (which creates the sheet), then write the header
+                result_df.index.name = '型号'
+                result_df.to_excel(writer, sheet_name=sheet_name, startrow=current_row + 1, startcol=0, index=True, header=True)
+                
+                # Now access the sheet to write the cat2 header (sheet is now created)
+                sheet = writer.sheets[sheet_name]
+                sheet.cell(row=current_row + 1, column=1, value=cat2_header)
+                
+                # Update current row for next cat2
+                # +1 for cat2 header row, +1 for column header row, +len(result_df) for data rows, +2 for empty rows between tables
+                current_row += len(result_df) + 4
+    
+    print(f"Excel file created successfully: {output_file_name}")
+
+
 def load_to_mysql(quotas_df):
     """
     Load quotas DataFrame to MySQL database.
@@ -434,15 +614,39 @@ def main():
     try:
         loaded_count = load_to_mysql(quotas_df)
     except ValueError as e:
-        print(f"Error loading to MySQL: {e}")
+        if "Duplicate entry" in str(e):
+            print(f"  Warning: Data already exists in MySQL, skipping load...")
+            loaded_count = 0
+        else:
+            print(f"Error loading to MySQL: {e}")
+            raise
+    
+    # Step 5: Export to Excel
+    print("\n[Step 5] Exporting data to Excel...")
+    
+    try:
+        # Create reversed dictionaries (code -> name) for export function
+        cat1_dict_reversed = {v: k for k, v in cat1_dict.items()}
+        cat2_dict_reversed = {v: k for k, v in cat2_dict.items()}
+        model_dict_reversed = {v: k for k, v in model_dict.items()}
+        process_dict_reversed = {v: k for k, v in process_dict.items()}
+        
+        export_quota_to_excel(quotas_df, process_dict_reversed, cat1_dict_reversed, cat2_dict_reversed, model_dict_reversed, "定额.xlsx")
+    except Exception as e:
+        print(f"Error exporting to Excel: {e}")
         raise
     
     # Display summary statistics
     print(f"\nSummary:")
     print(f"- Total records processed: {len(df)}")
     print(f"- Records loaded to MySQL: {loaded_count}")
-    print(f"- Unique groups: {df.groupby(['类别1', '类别2', '型号', '加工工序']).ngroups}")
-    print(f"- Records with '99991231' obsolete_date: {len(df[df['obsolete_date'] == '99991231'])}")
+    print(f"- Unique cat1 codes: {quotas_df['cat1_code'].nunique()}")
+    print(f"- Unique effective dates: {quotas_df['effective_date'].nunique()}")
+    print(f"- Unique cat2 codes: {quotas_df['cat2_code'].nunique()}")
+    print(f"- Unique model codes: {quotas_df['model_code'].nunique()}")
+    print(f"- Unique process codes: {quotas_df['process_code'].nunique()}")
+    print(f"- Excel sheets: {quotas_df[['cat1_code', 'effective_date']].drop_duplicates().shape[0]}")
+    print(f"- Excel file generated: 定额.xlsx")
     
     print(f"\nProcessing complete!")
     
