@@ -431,6 +431,198 @@ def get_column_seq_dict():
     return seq_dict
 
 
+def check_column_seq_table_exists():
+    """
+    Check if column_seq table exists in MySQL database.
+    
+    Returns:
+        bool: True if table exists, False otherwise
+    """
+    print("Checking if column_seq table exists in MySQL...")
+    query = "SHOW TABLES LIKE 'column_seq'"
+    df = mysql_sql(query)
+    
+    # Handle case where mysql_sql returns None (e.g., connection issues or table doesn't exist)
+    if df is None or df.empty:
+        print("  column_seq table does not exist in MySQL")
+        return False
+    
+    print("  column_seq table already exists in MySQL")
+    return True
+
+
+def create_column_seq_table():
+    """
+    Create column_seq table in MySQL if it doesn't exist.
+    
+    Table schema:
+    - id INT AUTO_INCREMENT PRIMARY KEY
+    - cat1_code VARCHAR(50) NOT NULL
+    - cat2_code VARCHAR(50) NOT NULL
+    - process_code VARCHAR(50) NOT NULL
+    - seq INT NOT NULL
+    """
+    print("Creating column_seq table in MySQL...")
+    
+    create_table_sql = """
+    CREATE TABLE IF NOT EXISTS column_seq (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        cat1_code VARCHAR(50) NOT NULL,
+        cat2_code VARCHAR(50) NOT NULL,
+        process_code VARCHAR(50) NOT NULL,
+        seq INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_cat1_cat2 (cat1_code, cat2_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """
+    
+    mysql_sql(create_table_sql)
+    print("  column_seq table created successfully (or already exists)")
+
+
+def get_column_seq_from_sqlite():
+    """
+    Read all data from SQLite column_seq table.
+    
+    Returns:
+        pandas.DataFrame: Data with columns [类别1, 类别2, 加工工序, seq]
+    """
+    print("Reading column_seq data from SQLite...")
+    query = "SELECT 类别1, 类别2, 加工工序, seq FROM column_seq"
+    df = sqlite_sql(query)
+    
+    if df.empty:
+        print("  No data found in SQLite column_seq table")
+    else:
+        print(f"  Retrieved {len(df)} records from SQLite column_seq table")
+    
+    return df
+
+
+def map_column_seq_to_mysql(df, cat1_dict, cat2_dict, process_dict):
+    """
+    Map column_seq DataFrame to MySQL column_seq schema.
+    
+    Column mapping:
+    - 类别1 -> cat1_code (using cat1_dict)
+    - 类别2 -> cat2_code (using cat2_dict)
+    - 加工工序 -> process_code (using process_dict)
+    - seq -> seq (direct)
+    
+    Args:
+        df: Source DataFrame with columns [类别1, 类别2, 加工工序, seq]
+        cat1_dict: Dictionary mapping category 1 names to codes
+        cat2_dict: Dictionary mapping category 2 names to codes
+        process_dict: Dictionary mapping process names to codes
+        
+    Returns:
+        pandas.DataFrame: Mapped data ready for MySQL insertion
+        
+    Raises:
+        ValueError: If any mapping key is not found in the dictionary
+    """
+    print("Mapping column_seq data to MySQL schema...")
+    
+    # Track missing keys for error reporting
+    missing_cat1 = set()
+    missing_cat2 = set()
+    missing_process = set()
+    
+    # Create new dataframe with MySQL column names
+    column_seq_df = pd.DataFrame()
+    
+    # Map 类别1 to cat1_code
+    for val in df['类别1']:
+        if val not in cat1_dict:
+            missing_cat1.add(val)
+    
+    # Map 类别2 to cat2_code
+    for val in df['类别2']:
+        if val not in cat2_dict:
+            missing_cat2.add(val)
+    
+    # Map 加工工序 to process_code
+    for val in df['加工工序']:
+        if val not in process_dict:
+            missing_process.add(val)
+    
+    # Check for missing keys and raise error if any
+    errors = []
+    if missing_cat1:
+        errors.append(f"Missing cat1 codes for values: {sorted(missing_cat1)}")
+    if missing_cat2:
+        errors.append(f"Missing cat2 codes for values: {sorted(missing_cat2)}")
+    if missing_process:
+        errors.append(f"Missing process codes for values: {sorted(missing_process)}")
+    
+    if errors:
+        raise ValueError("Mapping errors:\n" + "\n".join(errors))
+    
+    # Apply mappings
+    column_seq_df['cat1_code'] = df['类别1'].map(cat1_dict)
+    column_seq_df['cat2_code'] = df['类别2'].map(cat2_dict)
+    column_seq_df['process_code'] = df['加工工序'].map(process_dict)
+    column_seq_df['seq'] = df['seq']
+    
+    print(f"  Mapped {len(column_seq_df)} records to column_seq schema")
+    
+    # Print sample of mapped data
+    print("\n  Sample mapped data (first 5 records):")
+    print(column_seq_df.head())
+    
+    return column_seq_df
+
+
+def load_column_seq_to_mysql(column_seq_df):
+    """
+    Load column_seq DataFrame to MySQL database.
+    
+    Args:
+        column_seq_df: DataFrame with MySQL column_seq table schema
+        
+    Returns:
+        int: Number of records successfully loaded
+    """
+    table_name = "column_seq"
+    
+    print(f"Loading data to MySQL table: {table_name}")
+    
+    # Get MySQL database URL from environment variable
+    MYSQL_DB_URL = os.environ.get("MYSQL_DB_URL")
+    
+    if not MYSQL_DB_URL:
+        raise ValueError("MYSQL_DB_URL environment variable not set.")
+    
+    try:
+        from sqlalchemy import create_engine
+        engine = create_engine(MYSQL_DB_URL)
+        
+        # Clear existing data and load new data (replace)
+        # First, check if there's existing data
+        check_query = f"SELECT COUNT(*) as count FROM {table_name}"
+        existing_df = mysql_sql(check_query)
+        
+        if not existing_df.empty and existing_df.iloc[0]['count'] > 0:
+            print(f"  Clearing existing {existing_df.iloc[0]['count']} records from {table_name}")
+            # Use truncate or delete to clear the table
+            mysql_sql(f"TRUNCATE TABLE {table_name}")
+        
+        # Bulk insert
+        column_seq_df.to_sql(
+            name=table_name,
+            con=engine,
+            if_exists='append',
+            index=False,
+            chunksize=100
+        )
+        
+        print(f"  Successfully loaded {len(column_seq_df)} records to MySQL table: {table_name}")
+        return len(column_seq_df)
+        
+    except Exception as e:
+        raise ValueError(f"MySQL insert failed: {e}")
+
+
 def get_process_sort_key(process_code, cat1, cat2, process_name, seq_dict):
     """
     Get the sort key for a process based on column_seq table.
@@ -724,8 +916,43 @@ def main():
             print(f"Error loading to MySQL: {e}")
             raise
     
-    # Step 5: Export to Excel
-    print("\n[Step 5] Exporting data to Excel...")
+    # Step 5: Load column_seq table to MySQL
+    print("\n[Step 5] Loading column_seq table to MySQL...")
+    
+    try:
+        # Check if table exists and create if not
+        if not check_column_seq_table_exists():
+            print("  Creating column_seq table in MySQL...")
+            create_column_seq_table()
+        
+        # Read column_seq data from SQLite
+        column_seq_df = get_column_seq_from_sqlite()
+        
+        # Check if DataFrame is valid and not empty
+        if column_seq_df is not None and not column_seq_df.empty:
+            # Map to MySQL schema using dictionaries
+            column_seq_mysql_df = map_column_seq_to_mysql(
+                column_seq_df, cat1_dict, cat2_dict, process_dict
+            )
+            
+            # Load to MySQL
+            column_seq_loaded_count = load_column_seq_to_mysql(column_seq_mysql_df)
+            print(f"  Loaded {column_seq_loaded_count} records to column_seq table")
+        else:
+            print("  No data in SQLite column_seq table to load")
+            column_seq_loaded_count = 0
+            
+    except ValueError as e:
+        print(f"  Warning: Error loading column_seq table: {e}")
+        print("  Continuing with other operations...")
+        column_seq_loaded_count = 0
+    except Exception as e:
+        print(f"  Warning: Unexpected error loading column_seq table: {e}")
+        print("  Continuing with other operations...")
+        column_seq_loaded_count = 0
+    
+    # Step 6: Export to Excel
+    print("\n[Step 6] Exporting data to Excel...")
     
     try:
         # Create reversed dictionaries (code -> name) for export function
@@ -745,7 +972,8 @@ def main():
     # Display summary statistics
     print(f"\nSummary:")
     print(f"- Total records processed: {len(df)}")
-    print(f"- Records loaded to MySQL: {loaded_count}")
+    print(f"- Records loaded to MySQL (quotas): {loaded_count}")
+    print(f"- Records loaded to MySQL (column_seq): {column_seq_loaded_count}")
     print(f"- Unique cat1 codes: {quotas_df['cat1_code'].nunique()}")
     print(f"- Unique effective dates: {quotas_df['effective_date'].nunique()}")
     print(f"- Unique cat2 codes: {quotas_df['cat2_code'].nunique()}")
