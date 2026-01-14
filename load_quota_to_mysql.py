@@ -406,7 +406,64 @@ def get_model_sort_key(model_code):
         return 0
 
 
-def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, output_file_name):
+def get_column_seq_dict():
+    """
+    Get column sequence from SQLite column_seq table.
+    
+    Returns:
+        dict: Mapping of (类别1, 类别2, 加工工序) to seq number
+    """
+    print("Fetching column sequence from SQLite database...")
+    query = "SELECT 类别1, 类别2, 加工工序, seq FROM column_seq"
+    df = sqlite_sql(query)
+    
+    if df.empty:
+        print("Warning: No data found in column_seq table, using default column order")
+        return None
+    
+    # Create dictionary with (类别1, 类别2, 加工工序) as key and seq as value
+    seq_dict = {}
+    for _, row in df.iterrows():
+        key = (row['类别1'], row['类别2'], row['加工工序'])
+        seq_dict[key] = row['seq']
+    
+    print(f"Loaded {len(seq_dict)} column sequences")
+    return seq_dict
+
+
+def get_process_sort_key(process_code, cat1, cat2, process_name, seq_dict):
+    """
+    Get the sort key for a process based on column_seq table.
+    
+    Args:
+        process_code: The process code
+        cat1: Category 1 name
+        cat2: Category 2 name
+        process_name: Process name
+        seq_dict: Dictionary from get_column_seq_dict()
+        
+    Returns:
+        int: Sequence number (or large number if not found)
+    """
+    if seq_dict is None:
+        # Fallback to alphabetical sort
+        return process_code
+    
+    # Try to find exact match
+    key = (cat1, cat2, process_name)
+    if key in seq_dict:
+        return seq_dict[key]
+    
+    # If not found, try with code as name
+    key = (cat1, cat2, process_code)
+    if key in seq_dict:
+        return seq_dict[key]
+    
+    # Not found, put at the end
+    return float('inf')
+
+
+def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, output_file_name, seq_dict=None):
     """
     Export quota data to an Excel file with multiple sheets.
     
@@ -476,8 +533,8 @@ def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, ou
                 cat2_name = cat2_dict.get(cat2_code, str(cat2_code))
                 cat2_header = f"{cat2_name} ({cat2_code})"
                 
-                # Get unique process codes (columns)
-                unique_process_codes = sorted(cat2_df['process_code'].unique())
+                # Get unique process codes (columns) sorted by seq from column_seq table
+                unique_process_codes = sorted(cat2_df['process_code'].unique(), key=lambda code: get_process_sort_key(code, cat1_name, cat2_name, process_dict.get(code, str(code)), seq_dict))
                 
                 # Create column names: "{process_name}\n({process_code})"
                 column_names = []
@@ -677,7 +734,10 @@ def main():
         model_dict_reversed = {v: k for k, v in model_dict.items()}
         process_dict_reversed = {v: k for k, v in process_dict.items()}
         
-        export_quota_to_excel(quotas_df, process_dict_reversed, cat1_dict_reversed, cat2_dict_reversed, model_dict_reversed, "定额.xlsx")
+        # Get column sequence from SQLite for ordering columns
+        seq_dict = get_column_seq_dict()
+        
+        export_quota_to_excel(quotas_df, process_dict_reversed, cat1_dict_reversed, cat2_dict_reversed, model_dict_reversed, "定额.xlsx", seq_dict)
     except Exception as e:
         print(f"Error exporting to Excel: {e}")
         raise

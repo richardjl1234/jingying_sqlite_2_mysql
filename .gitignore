@@ -50,8 +50,8 @@ coverage.xml
 .~lock.*
 
 # Excel files (if generated/data files)
-*.xlsx
-*.xls
+# *.xlsx
+# *.xls
 
 # macOS
 .DS_Store
