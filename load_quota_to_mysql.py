@@ -13,6 +13,9 @@ import os
 import re
 import pandas as pd
 from datetime import datetime, timedelta
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 from sql_util import sqlite_sql, mysql_sql
 
 
@@ -476,11 +479,11 @@ def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, ou
                 # Get unique process codes (columns)
                 unique_process_codes = sorted(cat2_df['process_code'].unique())
                 
-                # Create column names: "{process_name} ({process_code})"
+                # Create column names: "{process_name}\n({process_code})"
                 column_names = []
                 for process_code in unique_process_codes:
                     process_name = process_dict.get(process_code, str(process_code))
-                    column_names.append(f"{process_name} ({process_code})")
+                    column_names.append(f"{process_name}\n({process_code})")
                 
                 # Get unique model codes (rows) and sort by the numeric part before hyphen
                 unique_model_codes = sorted(cat2_df['model_code'].unique(), key=get_model_sort_key)
@@ -522,7 +525,50 @@ def export_quota_to_excel(df, process_dict, cat1_dict, cat2_dict, model_dict, ou
                 
                 # Now access the sheet to write the cat2 header (sheet is now created)
                 sheet = writer.sheets[sheet_name]
-                sheet.cell(row=current_row + 1, column=1, value=cat2_header)
+                
+                # Apply styles
+                # 1. Cat2 header: bold blue font
+                cat2_cell = sheet.cell(row=current_row + 1, column=1, value=cat2_header)
+                cat2_cell.font = Font(bold=True, color='0000FF')
+                
+                # 2. Column headers: light yellow background
+                column_header_fill = PatternFill(start_color='FFFFCC', end_color='FFFFCC', fill_type='solid')
+                for col_idx in range(2, len(column_names) + 2):
+                    header_cell = sheet.cell(row=current_row + 2, column=col_idx)
+                    header_cell.fill = column_header_fill
+                
+                # Set row height for column header row to be 2x (30)
+                sheet.row_dimensions[current_row + 2].height = 30
+                
+                # 3. Row index: light pink background
+                row_index_fill = PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid')
+                for row_idx in range(current_row + 3, current_row + 3 + len(row_index)):
+                    index_cell = sheet.cell(row=row_idx, column=1)
+                    index_cell.fill = row_index_fill
+                
+                # Auto-adjust column widths
+                for col_idx in range(1, len(column_names) + 2):
+                    max_width = 0
+                    column_letter = get_column_letter(col_idx)
+                    
+                    # Check header row
+                    if col_idx == 1:
+                        header_text = '型号'
+                    else:
+                        header_text = column_names[col_idx - 2]
+                    max_width = max(max_width, len(str(header_text)))
+                    
+                    # Check data rows
+                    for row_idx in range(current_row + 3, current_row + 3 + len(row_index)):
+                        cell_value = sheet.cell(row=row_idx, column=col_idx).value
+                        if cell_value is not None:
+                            max_width = max(max_width, len(str(cell_value)))
+                    
+                    # Add some padding
+                    max_width = min(max_width * 1.3 + 5 , 50)  # Cap at 50
+                    
+                    # Set column width
+                    sheet.column_dimensions[column_letter].width = max_width
                 
                 # Update current row for next cat2
                 # +1 for cat2 header row, +1 for column header row, +len(result_df) for data rows, +2 for empty rows between tables
