@@ -118,9 +118,10 @@ def main():
                     # Sort indices to maintain original order
                     indices.sort()
                     # Keep first occurrence unchanged
-                    # For subsequent occurrences, add suffix starting from 1
-                    for i, idx in enumerate(indices[1:], start=1):
-                        df.at[idx, 'cat2_code'] = f"{code}{i}"
+                    # For subsequent occurrences, add alphabetical suffix _a, _b, _c...
+                    for i, idx in enumerate(indices[1:], start=0):
+                        suffix = chr(ord('a') + i)  # a, b, c...
+                        df.at[idx, 'cat2_code'] = f"{code}{suffix}"
             
             print("\nAfter processing duplicate cat2_code:")
             # Show all rows that were originally duplicates
