@@ -46,7 +46,10 @@ def retry(max_retries: int = RETRIES, delay: float = 1.0):
 
 # Read database URLs from environment variables
 SQLITE_DB_URL = os.environ.get("SQLITE_DB_URL", "sqlite:////home/richard/shared/jianglei/payroll/payroll_database.db")
-MYSQL_DB_URL = os.environ.get("MYSQL_DB_URL", "mysql+pymysql://REMOVED_CREDENTIALS@sh-cynosdbmysql-grp-icsnw792.sql.tencentcdb.com:21706/payroll_test")
+
+MYSQL_DB_URL = os.environ.get("MYSQL_DB_URL")
+if MYSQL_DB_URL is None:
+    raise EnvironmentError("MYSQL_DB_URL environment variable is not set. Application cannot proceed.")
 
 
 def sqlite_sql(sq: str):
