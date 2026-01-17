@@ -110,6 +110,10 @@ def get_quota_with_obsolete_date():
     # Note: include_groups=True (default) keeps grouping columns in the result
     df_with_obsolete = df.groupby(group_columns, group_keys=False).apply(calculate_obsolete_date)
     
+    # Suppress the FutureWarning about grouping columns (expected behavior for this use case)
+    import warnings
+    warnings.filterwarnings('ignore', category=FutureWarning, module='pandas')
+    
     # Reset index if it was added by groupby
     if 'level_0' in df_with_obsolete.columns:
         df_with_obsolete = df_with_obsolete.drop(columns=['level_0'])
@@ -597,18 +601,28 @@ def load_column_seq_to_mysql(column_seq_df):
         from sqlalchemy import create_engine
         engine = create_engine(MYSQL_DB_URL)
         
-        # Clear existing data and load new data (replace)
+        # Clear existing data and load new data
         # First, check if there's existing data
         check_query = f"SELECT COUNT(*) as count FROM {table_name}"
         existing_df = mysql_sql(check_query)
         
         if not existing_df.empty and existing_df.iloc[0]['count'] > 0:
             print(f"  Clearing existing {existing_df.iloc[0]['count']} records from {table_name}")
-            # Use truncate or delete to clear the table
+            # Use truncate to clear the table (preserves auto_increment)
             mysql_sql(f"TRUNCATE TABLE {table_name}")
         
+        # Deduplicate data before insert to avoid duplicate key errors
+        # Keep the last occurrence of each unique (cat1_code, cat2_code, process_code) combination
+        column_seq_df_deduped = column_seq_df.drop_duplicates(
+            subset=['cat1_code', 'cat2_code', 'process_code'], 
+            keep='last'
+        )
+        
+        if len(column_seq_df_deduped) < len(column_seq_df):
+            print(f"  Removed {len(column_seq_df) - len(column_seq_df_deduped)} duplicate records")
+        
         # Bulk insert
-        column_seq_df.to_sql(
+        column_seq_df_deduped.to_sql(
             name=table_name,
             con=engine,
             if_exists='append',
@@ -616,7 +630,7 @@ def load_column_seq_to_mysql(column_seq_df):
             chunksize=100
         )
         
-        print(f"  Successfully loaded {len(column_seq_df)} records to MySQL table: {table_name}")
+        print(f"  Successfully loaded {len(column_seq_df_deduped)} records to MySQL table: {table_name}")
         return len(column_seq_df)
         
     except Exception as e:
