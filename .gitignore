@@ -76,3 +76,5 @@ env/
 
 .marscode/
 
+*.xlsx
+
