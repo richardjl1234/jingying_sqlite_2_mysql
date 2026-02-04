@@ -15,7 +15,7 @@ def main():
     Main function to load worker data from Excel to MySQL.
     """
     # Step 1: Read worker data from Excel file
-    excel_file = '定额型号类别编码.xlsx'
+    excel_file = '定额型号类别编码_updated.xlsx'
     print(f"Reading worker data from Excel file: {excel_file}")
     print("Sheet: 工人")
     

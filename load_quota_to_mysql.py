@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
+from sqlalchemy import text
 from sql_util import sqlite_sql, mysql_sql
 
 
@@ -162,6 +163,146 @@ def get_cat1_dict():
     
     print(f"Loaded {len(cat1_dict)} category 1 codes")
     return cat1_dict
+
+
+def get_cat1_cat2_mapping():
+    """
+    Get category 1 and category 2 to new category 1 mapping.
+    
+    Mapping Logic:
+    =============
+    
+    For records where 类别1 = '轴转子':
+    --------------------------------
+    - Y2YPEJ2轴 -> 轴
+    - 内置轴及加长轴 -> 轴
+    - 2P3KWAO2轴 -> 轴
+    - YEJ2轴 -> 轴
+    - YVF轴 -> 轴
+    - 转子 -> 转子
+    - 转子1 -> 转子
+    - 转子2 -> 转子
+    
+    For records where 类别1 = '加长轴转子加工':
+    -----------------------------------------
+    - 加长轴 -> 轴
+    - 加长轴转子1 -> 转子
+    - 加长轴转子2 -> 转子
+    - 旁磁电机 -> 转子
+    
+    NOTE: 同步电机, 装配, and 装配铁 mappings REMOVED to avoid duplicates.
+    These categories now keep their original 类别1 values.
+    
+    For records where 类别1 = '特殊电机装配':
+    ----------------------------------------
+    - * (any) -> 装配喷漆
+    
+    For 类别1 values NOT in the above list:
+    ----------------------------------------
+    - Keep the original 类别1 value (同步电机, 装配, 装配铁, 端盖, 机座, 绕嵌排, 转子, 轴)
+    
+    Returns:
+        dict: Mapping of (类别1, 类别2) tuples to new 类别1 values
+    """
+    print("Building category 1 and category 2 to new category 1 mapping...")
+    
+    # Build the mapping dictionary
+    # NOTE: Removed 同步电机, 装配, 装配铁 mappings to avoid duplicates
+    # These categories will keep their original 类别1 values
+    mapping = {
+        # 轴转子 -> various
+        ('轴转子', 'Y2YPEJ2轴'): '轴',
+        ('轴转子', '内置轴及加长轴'): '轴',
+        ('轴转子', '2P3KWAO2轴'): '轴',
+        ('轴转子', 'YEJ2轴'): '轴',
+        ('轴转子', 'YVF轴'): '轴',
+        ('轴转子', '转子'): '转子',
+        ('轴转子', '转子1'): '转子',
+        ('轴转子', '转子2'): '转子',
+        
+        # 加长轴转子加工 -> various
+        ('加长轴转子加工', '加长轴'): '轴',
+        ('加长轴转子加工', '加长轴转子1'): '转子',
+        ('加长轴转子加工', '加长轴转子2'): '转子',
+        ('加长轴转子加工', '旁磁电机'): '转子',
+        
+        # 特殊电机装配 -> 装配喷漆 (SAFE - no duplicates)
+        ('特殊电机装配', '*'): '装配喷漆',
+        
+        # REMOVED: ('装配', '*'): '装配喷漆',
+        # REMOVED: ('装配铁', '*'): '装配喷漆',
+        # REMOVED: ('同步电机', '前装'): '装配喷漆',
+        # REMOVED: ('同步电机', '中装(铁)'): '装配喷漆',
+        # REMOVED: ('同步电机', '后装(铁)'): '装配喷漆',
+        # REMOVED: ('同步电机', '总装'): '装配喷漆',
+        # REMOVED: ('同步电机', '整机喷漆'): '装配喷漆',
+        # REMOVED: ('同步电机', '转子'): '转子',
+        # REMOVED: ('同步电机', '端盖'): '端盖',
+    }
+    
+    print(f"Loaded {len(mapping)} category mappings")
+    return mapping
+
+
+def apply_cat1_cat2_mapping(df, mapping):
+    """
+    Apply the category 1 and category 2 to new category 1 mapping.
+    
+    For records where (类别1, 类别2) matches a mapping key:
+    - If key is ('xxx', '*'), match any 类别2 with 类别1 = 'xxx'
+    - Otherwise, match exact (类别1, 类别2) pair
+    
+    For records where 类别1 is NOT in the mapping:
+    - Keep the original 类别1 value (端盖, 机座, 绕嵌排, 转子, 轴)
+    
+    Args:
+        df: DataFrame with 类别1 and 类别2 columns
+        mapping: Dictionary from get_cat1_cat2_mapping()
+        
+    Returns:
+        DataFrame with updated 类别1 column
+    """
+    print("\nApplying category 1 and category 2 mapping...")
+    
+    # Keep original 类别1 values that are NOT in the mapping keys
+    # These are: 端盖, 机座, 绕嵌排, 转子, 轴
+    mapped_cat1_values = set(key[0] for key in mapping.keys())
+    
+    # Create a copy to avoid modifying the original
+    df_mapped = df.copy()
+    
+    # Apply mappings
+    def get_new_cat1(row):
+        cat1 = row['类别1']
+        cat2 = row['类别2']
+        
+        # If 类别1 is not in mapping keys, keep original value
+        if cat1 not in mapped_cat1_values:
+            return cat1
+        
+        # Try exact match first
+        if (cat1, cat2) in mapping:
+            return mapping[(cat1, cat2)]
+        
+        # Try wildcard match (* matches any 类别2)
+        if (cat1, '*') in mapping:
+            return mapping[(cat1, '*')]
+        
+        # No mapping found, keep original
+        return cat1
+    
+    df_mapped['类别1'] = df_mapped.apply(get_new_cat1, axis=1)
+    
+    # Count how many values changed
+    changed = (df_mapped['类别1'] != df['类别1']).sum()
+    print(f"  Updated {changed} records with new 类别1 values")
+    
+    # Show breakdown of new 类别1 values
+    print(f"\n  New 类别1 distribution:")
+    for cat1, count in df_mapped['类别1'].value_counts().items():
+        print(f"    {cat1}: {count}")
+    
+    return df_mapped
 
 
 def get_cat2_dict():
@@ -864,6 +1005,23 @@ def load_to_mysql(quotas_df):
         from sqlalchemy import create_engine
         engine = create_engine(MYSQL_DB_URL)
         
+        # Disable foreign key checks temporarily to allow truncate
+        with engine.connect() as connection:
+            connection.execute(text("SET FOREIGN_KEY_CHECKS=0"))
+            connection.commit()
+        
+        # Truncate the table to clear existing data (preserves auto_increment)
+        with engine.connect() as connection:
+            connection.execute(text(f"TRUNCATE TABLE {table_name}"))
+            connection.commit()
+        
+        # Re-enable foreign key checks
+        with engine.connect() as connection:
+            connection.execute(text("SET FOREIGN_KEY_CHECKS=1"))
+            connection.commit()
+        
+        print(f"  Cleared existing data from {table_name}")
+        
         # Bulk insert with chunksize
         quotas_df.to_sql(
             name=table_name,
@@ -896,6 +1054,11 @@ def main():
         print("No data to process. Exiting.")
         return
     
+    # Step 1.5: Update 类别1 based on 类别1 and 类别2 using mapping
+    print("\n[Step 1.5] Updating 类别1 based on 类别1 and 类别2 mapping...")
+    cat1_cat2_mapping = get_cat1_cat2_mapping()
+    df = apply_cat1_cat2_mapping(df, cat1_cat2_mapping)
+    
     # Step 2: Get code dictionaries from MySQL
     print("\n[Step 2] Fetching code dictionaries from MySQL...")
     
@@ -923,12 +1086,8 @@ def main():
     try:
         loaded_count = load_to_mysql(quotas_df)
     except ValueError as e:
-        if "Duplicate entry" in str(e):
-            print(f"  Warning: Data already exists in MySQL, skipping load...")
-            loaded_count = 0
-        else:
-            print(f"Error loading to MySQL: {e}")
-            raise
+        print(f"Error loading to MySQL: {e}")
+        raise
     
     # Step 5: Load column_seq table to MySQL
     print("\n[Step 5] Loading column_seq table to MySQL...")
@@ -941,6 +1100,10 @@ def main():
         
         # Read column_seq data from SQLite
         column_seq_df = get_column_seq_from_sqlite()
+        
+        # Apply the same category 1 and category 2 mapping to column_seq data
+        print("\n[Step 5.5] Applying category mapping to column_seq data...")
+        column_seq_df = apply_cat1_cat2_mapping(column_seq_df, cat1_cat2_mapping)
         
         # Check if DataFrame is valid and not empty
         if column_seq_df is not None and not column_seq_df.empty:

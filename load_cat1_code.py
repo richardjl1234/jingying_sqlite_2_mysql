@@ -13,8 +13,8 @@ def main():
     Main function to load category 1 data from Excel to MySQL.
     """
     # File configuration
-    excel_file = "cat1_code.xlsx"
-    sheet_name = 0  # First sheet by default
+    excel_file = "定额型号类别编码_updated.xlsx"
+    sheet_name = "类别1"
     
     try:
         # Step 1: Open the Excel file and read the data
