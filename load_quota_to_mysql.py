@@ -952,39 +952,30 @@ def main():
     # Step 5: Load column_seq table to MySQL
     print("\n[Step 5] Loading column_seq table to MySQL...")
     
-    try:
-        # Check if table exists and create if not
-        if not check_column_seq_table_exists():
-            print("  Creating column_seq table in MySQL...")
-            create_column_seq_table()
-        
-        # Read column_seq data from SQLite
-        column_seq_df = get_column_seq_from_sqlite()
-        
-        # Use original 类别1 values for column_seq (no remapping needed)
-        
-        # Check if DataFrame is valid and not empty
-        if column_seq_df is not None and not column_seq_df.empty:
-            # Map to MySQL schema using dictionaries
-            column_seq_mysql_df = map_column_seq_to_mysql(
-                column_seq_df, cat1_dict, cat2_dict, process_dict
-            )
-            
-            # Load to MySQL
-            column_seq_loaded_count = load_column_seq_to_mysql(column_seq_mysql_df)
-            print(f"  Loaded {column_seq_loaded_count} records to column_seq table")
-        else:
-            print("  No data in SQLite column_seq table to load")
-            column_seq_loaded_count = 0
-            
-    except ValueError as e:
-        print(f"  Warning: Error loading column_seq table: {e}")
-        print("  Continuing with other operations...")
+    # Check if table exists and create if not
+    if not check_column_seq_table_exists():
+        print("  Creating column_seq table in MySQL...")
+        create_column_seq_table()
+    
+    # Read column_seq data from SQLite
+    column_seq_df = get_column_seq_from_sqlite()
+    
+    # Use original 类别1 values for column_seq (no remapping needed)
+    
+    # Check if DataFrame is valid and not empty
+    if column_seq_df is None or column_seq_df.empty:
+        print("  No data in SQLite column_seq table to load")
         column_seq_loaded_count = 0
-    except Exception as e:
-        print(f"  Warning: Unexpected error loading column_seq table: {e}")
-        print("  Continuing with other operations...")
-        column_seq_loaded_count = 0
+    else:
+        # Map to MySQL schema using dictionaries
+        # This will raise ValueError with all missing codes if any mapping fails
+        column_seq_mysql_df = map_column_seq_to_mysql(
+            column_seq_df, cat1_dict, cat2_dict, process_dict
+        )
+        
+        # Load to MySQL
+        column_seq_loaded_count = load_column_seq_to_mysql(column_seq_mysql_df)
+        print(f"  Loaded {column_seq_loaded_count} records to column_seq table")
     
     # Step 6: Export to Excel
     print("\n[Step 6] Exporting data to Excel...")
